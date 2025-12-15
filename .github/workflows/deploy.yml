@@ -1,0 +1,30 @@
+name: CI-CD Holamundo AWS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          docker build -t holamundo-app ./app
+
+      - name: Run container test
+        run: |
+          docker run -d --name test-app -p 8080:80 holamundo-app
+          sleep 5
+          docker logs test-app
+
+      - name: Stop container
+        run: docker rm -f test-app
