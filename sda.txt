@@ -1,8 +1,7 @@
 terraform {
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+      source = "hashicorp/aws"
     }
   }
 }
@@ -12,7 +11,7 @@ provider "aws" {
 }
 
 # =========================================================
-# DATA SOURCES
+# DATA
 # =========================================================
 
 data "aws_vpc" "default" {
@@ -45,7 +44,6 @@ resource "aws_security_group" "web_sg" {
   vpc_id = data.aws_vpc.default.id
 
   ingress {
-    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -53,7 +51,6 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
-    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -86,12 +83,7 @@ resource "aws_lb_target_group" "tg" {
   vpc_id   = data.aws_vpc.default.id
 
   health_check {
-    path                = "/"
-    port                = "80"
-    healthy_threshold   = 2
-    unhealthy_threshold = 5
-    interval            = 15
-    timeout             = 5
+    path = "/"
   }
 }
 
@@ -107,11 +99,10 @@ resource "aws_lb_listener" "listener" {
 }
 
 # =========================================================
-# LAUNCH TEMPLATE (NGINX + DOCKER)
+# LAUNCH TEMPLATE
 # =========================================================
 
 resource "aws_launch_template" "lt" {
-  name_prefix   = "holamundo-lt-"
   image_id      = data.aws_ami.amazon_linux.id
   instance_type = "t3.micro"
 
@@ -123,40 +114,15 @@ resource "aws_launch_template" "lt" {
   user_data = base64encode(<<EOF
 #!/bin/bash
 dnf update -y
-
-# Instalar Docker, Git y NGINX
-dnf install -y docker git nginx
-
+dnf install -y docker git
 systemctl start docker
 systemctl enable docker
-systemctl start nginx
-systemctl enable nginx
-
 usermod -aG docker ec2-user
 
-# Docker Compose
 curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
 -o /usr/local/bin/docker-compose
 chmod +x /usr/local/bin/docker-compose
 
-# CONFIGURAR NGINX COMO REVERSE PROXY
-cat <<NGINX > /etc/nginx/nginx.conf
-events {}
-http {
-  server {
-    listen 80;
-    location / {
-      proxy_pass http://127.0.0.1:5000;
-      proxy_set_header Host \$host;
-      proxy_set_header X-Real-IP \$remote_addr;
-    }
-  }
-}
-NGINX
-
-systemctl restart nginx
-
-# CLONAR APP Y LEVANTAR DOCKER
 cd /home/ec2-user
 git clone https://github.com/XeroSWM/holamundo-aws.git
 cd holamundo-aws
@@ -170,53 +136,71 @@ EOF
 # =========================================================
 
 resource "aws_autoscaling_group" "asg" {
-  min_size            = 2
-  max_size            = 4
-  desired_capacity    = 2
+  min_size            = 4
+  max_size            = 6
+  desired_capacity    = 4
   vpc_zone_identifier = data.aws_subnets.default.ids
   target_group_arns   = [aws_lb_target_group.tg.arn]
-
-  health_check_type         = "ELB"
-  health_check_grace_period = 300
 
   launch_template {
     id      = aws_launch_template.lt.id
     version = "$Latest"
   }
-
-  tag {
-    key                 = "Name"
-    value               = "holamundo-ec2"
-    propagate_at_launch = true
-  }
 }
 
-# =========================================================
-# OUTPUTS
-# =========================================================
+############################################
+# OUTPUTS (VISIBILIDAD DEL FRONTEND)
+############################################
 
-output "alb_dns" {
-  description = "DNS público del ALB"
-  value       = aws_lb.alb.dns_name
+output "frontend_dns" {
+  description = "DNS público del Application Load Balancer"
+  value       = aws_lb.main_lb.dns_name
 }
 
-output "app_url" {
-  description = "URL pública de la aplicación"
-  value       = "http://${aws_lb.alb.dns_name}"
+output "frontend_url" {
+  description = "URL pública del frontend (puerto 80)"
+  value       = "http://${aws_lb.main_lb.dns_name}:80"
 }
 
-output "public_port" {
-  value = 80
+output "frontend_port" {
+  description = "Puerto expuesto al público por el ALB"
+  value       = 80
 }
 
-output "internal_app_port" {
-  value = 5000
+############################################
+# OUTPUTS (INSTANCIAS EC2)
+############################################
+
+output "ec2_instance_ids" {
+  description = "IDs de las instancias EC2 del Auto Scaling Group"
+  value       = data.aws_instances.main_asg_instances.ids
 }
 
-output "internal_db_port" {
-  value = 3306
+output "ec2_public_ips" {
+  description = "IPs públicas de las instancias EC2"
+  value       = data.aws_instances.main_asg_instances.public_ips
 }
 
-output "architecture" {
-  value = "ALB (80) → EC2 → NGINX → Docker → Flask (5000) → MySQL (3306)"
+output "ec2_private_ips" {
+  description = "IPs privadas de las instancias EC2"
+  value       = data.aws_instances.main_asg_instances.private_ips
+}
+
+############################################
+# OUTPUTS INFORMATIVOS (DOCKER / APP)
+############################################
+
+output "app_internal_port" {
+  description = "Puerto interno donde corre la app Flask dentro del contenedor"
+  value       = 5000
+}
+
+output "db_internal_port" {
+  description = "Puerto interno de MySQL dentro del contenedor"
+  value       = 3306
+}
+
+output "architecture_note" {
+  description = "Nota sobre la arquitectura"
+  value       = "El tráfico entra por el ALB (80) y se enruta a EC2 -> Docker -> Flask (5000). MySQL (3306) es interno y no expuesto."
 }

@@ -1,20 +1,21 @@
-version: '3.8'
-
 services:
   db:
-    image: mysql:8
+    image: mysql:8.4
     container_name: holamundo-db
+    restart: always
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: holamundo
     volumes:
+      - db_data:/var/lib/mysql
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - holamundo-net
 
   app:
     build: ./app
     container_name: holamundo-app
-    ports:
-      - "80:80"
+    restart: always
     depends_on:
       - db
     environment:
@@ -22,4 +23,14 @@ services:
       DB_USER: root
       DB_PASSWORD: root
       DB_NAME: holamundo
+    expose:
+      - "5000"
+    networks:
+      - holamundo-net
 
+volumes:
+  db_data:
+
+networks:
+  holamundo-net:
+    driver: bridge
